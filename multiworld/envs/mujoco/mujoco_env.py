@@ -5,7 +5,7 @@ from gym.utils import seeding
 import numpy as np
 from os import path
 import gym
-
+import scipy
 try:
     import mujoco_py
 except ImportError as e:
@@ -114,8 +114,10 @@ class MujocoEnv(gym.Env):
             # window size used for old mujoco-py:
             width, height = 500, 500
             width, height = 4000, 4000
+            
             data = self._get_viewer().read_pixels(width, height, depth=False)
             # original image is upside-down, so flip it
+            data = scipy.misc.imresize(data, (1000,1000), interp='bilinear')
             return data[::-1, :, :]
         elif mode == 'human':
             self._get_viewer().render()

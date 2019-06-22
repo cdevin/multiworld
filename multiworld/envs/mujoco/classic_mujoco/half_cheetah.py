@@ -7,7 +7,9 @@ from multiworld.envs.env_util import get_stat_in_paths, create_stats_ordered_dic
 from multiworld.envs.mujoco.mujoco_env import MujocoEnv
 
 class HalfCheetahEnv(MujocoEnv, MultitaskEnv, Serializable):
-    def __init__(self, action_scale=1, frame_skip=5, reward_type='vel_distance', indicator_threshold=.1, fixed_goal=5, fix_goal=False, max_speed=6):
+    def __init__(self, action_scale=1, frame_skip=5, reward_type='vel_distance', indicator_threshold=0.1, fixed_goal=5, fix_goal=False, max_speed=6, 
+                 use_vel_in_goal=False, use_vel_in_state=True, history_len=1,
+                ):
         self.quick_init(locals())
         MultitaskEnv.__init__(self)
         self.action_scale = action_scale
@@ -21,12 +23,24 @@ class HalfCheetahEnv(MujocoEnv, MultitaskEnv, Serializable):
         self.fixed_goal = fixed_goal
         self.fix_goal = fix_goal
         self._state_goal = None
-        self.goal_space = Box(np.array(-1*max_speed), np.array(max_speed))
+        self.use_vel_in_goal = use_vel_in_goal
+        self.use_vel_in_state = use_vel_in_state
+        self.history_len = history_len
         obs_size = self._get_env_obs().shape[0]
+        high = np.array([1,0.5,1.05, 0.785, .785, .7,  .87, .5,np.pi])
+        low =  np.array([-1,-0.5,-0.52, -0.785, -0.4, -1, -1.2, -.5 ,np.pi])
+        
+        high_vel = np.zeros(9)
+        high_tot = np.concatenate((high, high_vel))
+        low_tot = np.concatenate((low, -1*high_vel))
+        if self.use_vel_in_goal:
+            self.goal_space = Box(low_tot[1:], high_tot[1:])
+        else:
+            self.goal_space = Box(low[1:], high[1:])# Box(np.array(-1*max_speed), np.array(max_speed))
         high = np.inf * np.ones(obs_size)
         low = -high
         self.obs_space = Box(low, high)
-        self.achieved_goal_space = Box(self.obs_space.low[8], self.obs_space.high[8])
+        self.achieved_goal_space = self.goal_space#Box(self.obs_space.low[8], self.obs_space.high[8])
         self.observation_space = Dict([
             ('observation', self.obs_space),
             ('desired_goal', self.goal_space),
@@ -35,7 +49,12 @@ class HalfCheetahEnv(MujocoEnv, MultitaskEnv, Serializable):
             ('state_desired_goal', self.goal_space),
             ('state_achieved_goal', self.achieved_goal_space),
         ])
+        if self.use_vel_in_goal:
+            self.goals = np.load('/home/coline/hexiang/cheetah_states_with_vel.npy')
+        else:
+            self.goals = np.load('/home/coline/hexiang/cheetah_states.npy')
         self.reset()
+        self.imsize = 500
 
     @property
     def model_name(self):
@@ -57,7 +76,9 @@ class HalfCheetahEnv(MujocoEnv, MultitaskEnv, Serializable):
         ])
     def _get_obs(self):
         state_obs = self._get_env_obs()
-        achieved_goal = state_obs[8]
+        achieved_goal = state_obs[:8]
+        if self.use_vel_in_goal:
+            achieved_goal = state_obs
         return dict(
             observation=state_obs,
             desired_goal=self._state_goal,
@@ -69,13 +90,15 @@ class HalfCheetahEnv(MujocoEnv, MultitaskEnv, Serializable):
 
     def _get_info(self, ):
         state_obs = self._get_env_obs()
-        xvel = state_obs[8]
+        xvel = state_obs[:8]
+        if self.use_vel_in_goal:
+            xvel = state_obs
         desired_xvel = self._state_goal
         xvel_error = np.linalg.norm(xvel - desired_xvel)
         info = dict()
-        info['vel_distance'] = xvel_error
-        info['vel_difference'] =np.abs(xvel - desired_xvel)
-        info['vel_success'] = (xvel_error < self.indicator_threshold).astype(float)
+        info['state_distance'] = xvel_error
+        info['state_difference'] =np.abs(xvel - desired_xvel)
+        info['state_success'] = (xvel_error < self.indicator_threshold).astype(float)
         return info
 
     def compute_rewards(self, actions, obs):
@@ -108,9 +131,9 @@ class HalfCheetahEnv(MujocoEnv, MultitaskEnv, Serializable):
     def get_diagnostics(self, paths, prefix=''):
         statistics = OrderedDict()
         for stat_name in [
-            'vel_distance',
-            'vel_success',
-            'vel_difference',
+            'state_distance',
+            'state_success',
+            'state_difference',
         ]:
             stat_name = stat_name
             stat = get_stat_in_paths(paths, 'env_infos', stat_name)
@@ -153,6 +176,8 @@ class HalfCheetahEnv(MujocoEnv, MultitaskEnv, Serializable):
                 self.goal_space.high,
                 size=(batch_size, self.goal_space.low.size),
             )
+#             goals_idx = np.random.choice(self.goals.shape[0], size=(batch_size))
+#             goals = self.goals[goals_idx]
         return {
             'desired_goal': goals,
             'state_desired_goal': goals,
